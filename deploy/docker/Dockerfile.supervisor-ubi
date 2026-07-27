@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.4
+
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# In-house supervisor image build on UBI 10.
+#
+# Two-stage build:
+#   Stage 1 (builder): Install Rust toolchain via rustup, compile openshell-sandbox
+#                      as a static musl binary
+#   Stage 2 (runtime): Copy the static binary into a scratch image
+#
+# Usage:
+#   docker build -f deploy/docker/Dockerfile.supervisor-ubi -t openshell/supervisor:latest .
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build the static Rust binary (musl target)
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi10/ubi:latest AS builder
+
+ARG RUST_VERSION=1.95.0
+
+ENV CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:$PATH"
+
+RUN dnf install -y --nodocs \
+    gcc \
+    gcc-c++ \
+    make \
+    cmake \
+    clang \
+    clang-devel \
+    perl-core \
+    git \
+    musl-tools \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Install Rust via rustup with the musl target for static linking.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal \
+    && rustup target add x86_64-unknown-linux-musl \
+    && rustup target add aarch64-unknown-linux-musl \
+    && rustc --version && cargo --version
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY proto/ proto/
+COPY crates/ crates/
+
+# Detect the build architecture and compile a static musl binary.
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+      amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
+      arm64) RUST_TARGET=aarch64-unknown-linux-musl ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && cargo build \
+      --release \
+      --target "${RUST_TARGET}" \
+      -p openshell-sandbox \
+      --bin openshell-sandbox \
+    && install -m 0550 "target/${RUST_TARGET}/release/openshell-sandbox" /openshell-sandbox
+
+RUN /openshell-sandbox --version \
+    && ldd /openshell-sandbox 2>&1 || true
+
+# ---------------------------------------------------------------------------
+# Stage 2: Scratch runtime (static binary, no OS layer needed)
+# ---------------------------------------------------------------------------
+FROM scratch AS supervisor
+
+COPY --from=builder --chmod=0550 /openshell-sandbox /openshell-sandbox
+
+ENTRYPOINT ["/openshell-sandbox"]

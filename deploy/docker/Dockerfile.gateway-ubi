@@ -1,0 +1,89 @@
+# syntax=docker/dockerfile:1.4
+
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# In-house gateway image build on UBI 10.
+#
+# Two-stage build:
+#   Stage 1 (builder): Install Rust toolchain via rustup, compile openshell-gateway
+#   Stage 2 (runtime): Copy the binary into a minimal UBI image
+#
+# Usage:
+#   docker build -f deploy/docker/Dockerfile.gateway-ubi -t openshell/gateway:latest .
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build the Rust binary
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi10/ubi:latest AS builder
+
+ARG RUST_VERSION=1.95.0
+
+ENV CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:$PATH"
+
+# Install system build dependencies.
+# - gcc/g++: C/C++ compiler for native deps (z3, protobuf-src)
+# - cmake: required by z3-sys bundled build
+# - clang/clang-devel: required by bindgen for FFI generation
+# - git: required for git-describe version embedding
+RUN dnf install -y --nodocs \
+    gcc \
+    gcc-c++ \
+    make \
+    cmake \
+    clang \
+    clang-devel \
+    perl-core \
+    git \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Install Rust via rustup. UBI10 rust-toolset ships 1.84.1, but the project
+# requires edition 2024 / MSRV 1.90.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal \
+    && rustc --version && cargo --version
+
+WORKDIR /build
+
+# Copy manifests, lockfile, and proto definitions first for layer caching.
+COPY Cargo.toml Cargo.lock ./
+COPY proto/ proto/
+
+# Copy all crates (required for workspace resolution).
+COPY crates/ crates/
+
+# Build the gateway binary with bundled z3 (statically links z3 so the
+# runtime image needs no shared libz3).
+RUN cargo build \
+    --release \
+    -p openshell-server \
+    --bin openshell-gateway \
+    --features bundled-z3
+
+# Verify the binary runs and inspect linkage.
+RUN ./target/release/openshell-gateway --version \
+    && ldd ./target/release/openshell-gateway || true
+
+# ---------------------------------------------------------------------------
+# Stage 2: Minimal runtime image
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi10/ubi-micro:latest AS gateway
+
+COPY --from=builder /build/target/release/openshell-gateway /usr/local/bin/openshell-gateway
+
+# Copy CA certificates from builder for TLS connections (tonic
+# tls-native-roots reads the system trust store).
+COPY --from=builder /etc/pki/tls/certs/ca-bundle.crt /etc/pki/tls/certs/ca-bundle.crt
+COPY --from=builder /etc/pki/ca-trust/extracted/ /etc/pki/ca-trust/extracted/
+
+USER 1000:1000
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/openshell-gateway"]
+CMD ["--bind-address", "0.0.0.0", "--port", "8080"]
