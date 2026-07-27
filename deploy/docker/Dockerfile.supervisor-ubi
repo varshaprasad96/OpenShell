@@ -51,6 +51,7 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
 COPY proto/ proto/
+COPY providers/ providers/
 COPY crates/ crates/
 
 # Detect the build architecture and compile a static musl binary.

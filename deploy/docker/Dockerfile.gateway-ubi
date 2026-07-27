@@ -51,9 +51,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 WORKDIR /build
 
-# Copy manifests, lockfile, and proto definitions first for layer caching.
+# Copy manifests, lockfile, proto definitions, and provider profiles
+# (openshell-providers embeds YAML files via include_str! at compile time).
 COPY Cargo.toml Cargo.lock ./
 COPY proto/ proto/
+COPY providers/ providers/
 
 # Copy all crates (required for workspace resolution).
 COPY crates/ crates/
