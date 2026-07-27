@@ -36,15 +36,28 @@ RUN dnf install -y --nodocs \
     clang-devel \
     perl-core \
     git \
-    musl-tools \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
+# Build musl libc from source (musl-tools is a Debian package, unavailable on UBI).
+ARG MUSL_VERSION=1.2.5
+RUN curl -fsSL "https://musl.libc.org/releases/musl-${MUSL_VERSION}.tar.gz" \
+    | tar xz -C /tmp \
+    && cd /tmp/musl-${MUSL_VERSION} \
+    && ./configure --prefix=/usr/local/musl --disable-shared \
+    && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/musl-${MUSL_VERSION} \
+    && ln -s /usr/local/musl/bin/musl-gcc /usr/local/bin/musl-gcc
+
 # Install Rust via rustup with the musl target for static linking.
+# Only add the musl target matching the host architecture.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal \
-    && rustup target add x86_64-unknown-linux-musl \
-    && rustup target add aarch64-unknown-linux-musl \
+    && ARCH="$(uname -m)" \
+    && case "${ARCH}" in \
+         x86_64)  rustup target add x86_64-unknown-linux-musl ;; \
+         aarch64) rustup target add aarch64-unknown-linux-musl ;; \
+       esac \
     && rustc --version && cargo --version
 
 WORKDIR /build
@@ -55,12 +68,16 @@ COPY providers/ providers/
 COPY crates/ crates/
 
 # Detect the build architecture and compile a static musl binary.
+# Configure Cargo to use the musl-gcc wrapper we built from source.
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
       amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
       arm64) RUST_TARGET=aarch64-unknown-linux-musl ;; \
       *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
+    && mkdir -p .cargo \
+    && printf '[target.%s]\nlinker = "musl-gcc"\n' "${RUST_TARGET}" > .cargo/config.toml \
+    && export CC_$(echo "${RUST_TARGET}" | tr '-' '_')=musl-gcc \
     && cargo build \
       --release \
       --target "${RUST_TARGET}" \
