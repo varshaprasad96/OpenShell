@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Host-side dependencies for the OpenHands x OpenShell demo driver.
+#
+# `uv run driver.py` resolves these into an ephemeral environment. The driver
+# needs the OpenHands remote-server client (openhands-sdk + openhands-tools for
+# get_default_agent).
+#
+# The OpenShell Python SDK is NOT listed as a package dependency: the repo root
+# is a maturin project whose install recompiles the entire Rust CLI, which is
+# slow and unnecessary here. The SDK under `python/openshell/` is pure Python
+# once its protobuf stubs are generated (`mise run python:proto`), so driver.py
+# adds that directory to sys.path and imports it directly. We only need to
+# declare the SDK's own runtime deps (grpcio, protobuf, httpx). The `openshell`
+# CLI the driver shells out to for `forward` / `policy` / `inference` is
+# expected on PATH already (set OPENSHELL_BIN to override).
+#
+# Keep openhands-* pinned in lockstep with demo/openhands/Dockerfile — the
+# in-sandbox agent-server and this client must speak the same protocol.
+
+[project]
+name = "openhands-openshell-demo"
+version = "0.1.0"
+description = "Driver for running an OpenHands agent inside an OpenShell sandbox"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "openhands-sdk==1.40.0",
+    "openhands-tools==1.40.0",
+    "pydantic>=2.7",
+    # OpenShell Python SDK runtime deps (imported from ../../python via sys.path).
+    "grpcio>=1.60",
+    "protobuf>=5.26",
+    "httpx>=0.27",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88

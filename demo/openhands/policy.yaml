@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Network policy for the OpenHands demo sandbox — the security beat of the demo.
+#
+# `openshell policy set` REPLACES the whole policy, and on a LIVE sandbox the
+# supervisor refuses to remove filesystem/process constraints that were applied
+# at startup. So the filesystem_policy, landlock, and process blocks below are
+# copied verbatim from the demo image's baked-in /etc/openshell/policy.yaml
+# (the community "dev sandbox" default): applying this file changes ONLY the
+# network layer, which is the per-CONNECT, live-mutable part of the policy.
+#
+# The change we make is `network_policies: {}` — an empty allowlist, i.e.
+# DEFAULT-DENY egress. The image default ships named allowlists (claude_code,
+# pypi, github_*, ...) binding specific binaries to specific hosts; emptying the
+# map removes them all, so NOTHING on the open internet is reachable. An
+# unapproved `curl https://example.com` from inside the sandbox is answered by
+# the L7 proxy with HTTP 403 and an OCSF `CONNECT denied example.com:443`
+# (class 4001) event.
+#
+# The agent's own LLM traffic still works: it targets the magic host
+# `inference.local:443`, which the supervisor intercepts on the inference path
+# *before* the general egress deny and forwards to the configured provider with
+# the real operator key injected outbound. So the coding agent stays fully
+# functional while it holds only a dummy client-side key and cannot exfiltrate.
+#
+# The demo task (write + run a Python file) needs no other network access. To
+# let the agent install packages instead, re-add the image default's `pypi`
+# block (pypi.org + files.pythonhosted.org) here.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Intentionally empty: DEFAULT-DENY egress. inference.local is handled by the
+# inference-interception path and does not need an entry here.
+network_policies: {}
