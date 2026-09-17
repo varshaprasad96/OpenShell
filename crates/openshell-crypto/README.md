@@ -5,8 +5,9 @@ production implementation. This change preserves TLS algorithms, Ed25519 gateway
 JWTs, P-256 certificate keys, native trust roots, and credential envelope formats.
 The interface is intended to support a system-OpenSSL backend for regulated
 deployments, related to [#900](https://github.com/NVIDIA/OpenShell/issues/900).
-This stage implements AWS-LC only. An OpenSSL proof of concept will validate the
-provider integration separately; this is not a FIPS build or compliance claim.
+AWS-LC remains the only production implementation. The standalone
+[OpenSSL PoC](../../examples/openssl-crypto-poc/README.md) validates the provider
+contracts separately; it is not a FIPS build or compliance claim.
 
 ## Boundaries
 
@@ -55,8 +56,8 @@ from the entire product graph.
 The later OpenSSL build must use system shared libraries without vendoring,
 respect system provider configuration, and verify the resulting linked artifacts.
 Linking and module qualification are build/deployment concerns, separate from the
-Rust key and primitive contracts. The proof of concept will test those concerns
-and the Rustls provider integration before a production OpenSSL backend is added.
+Rust key and primitive contracts. The proof of concept tests dynamic linkage and the Rustls provider integration;
+deployment qualification remains work for a production OpenSSL backend.
 
 ## Lifecycle and posture
 
@@ -107,7 +108,8 @@ the primitive capability report. OpenSSL, strict policy, module version discover
 and deployment qualification belong in follow-up work.
 
 Durable proxy CA loading uses backend key import and retains rcgen's X.509
-parser. The parser and build-time Z3 downloader retain the narrowly allowed Ring dependencies
+parser. Only the proxy enables rcgen's parser feature; the standalone facade
+does not require it. The parser and build-time Z3 downloader retain the narrowly allowed Ring dependencies
 listed in `deny.toml`; context capabilities do not attest these paths.
 
 ## Extending and checking

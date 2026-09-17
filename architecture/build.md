@@ -39,9 +39,13 @@ feature centrally. Backend-owned signing keys support fallible export and import
 rcgen only adapts certificate encoding. Explicit context selection controls
 first-party TLS configuration even after Rustls global initialization. Without
 explicit selection, builders preserve embedder defaults. Capability reporting
-does not attest globals or dependency-owned crypto. This boundary prepares a
-system-OpenSSL backend; its proof of concept, dynamic-link packaging, and strict
-FIPS operation are separate follow-up work. The crate README defines extension and coverage boundaries.
+does not attest globals or dependency-owned crypto. The standalone
+[OpenSSL interface experiment](../examples/openssl-crypto-poc/README.md) exercises
+this boundary against dynamically linked system OpenSSL without selecting it for
+application binaries. Dynamic-link packaging and strict FIPS operation remain
+follow-up work. The crate README defines extension and coverage boundaries.
+The rcgen certificate-parser feature is enabled only by the MITM proxy that
+imports persisted CAs; it is not required by the crypto facade.
 Digest operations propagate backend failures through JWT and credential key-ID
 generation rather than requiring infallible provider operations.
 
