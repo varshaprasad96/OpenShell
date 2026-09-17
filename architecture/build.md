@@ -34,10 +34,14 @@ development shells provide static AWS-LC libraries.
 First-party crypto selection lives in `openshell-crypto`: backend-neutral
 primitive traits and protocol adapters preserve existing TLS, PKI, JWT, and
 credential-storage behavior. Application crates enable integration features on
-that crate instead of naming a backend. Process-default initialization preserves
-existing embedder providers; context capability reporting does not attest those
-globals or dependency-owned crypto. OpenSSL and strict FIPS operation are separate
-follow-up work. The crate README defines extension and coverage boundaries.
+that crate instead of naming a backend. The workspace selects the default AWS-LC
+feature centrally. Backend-owned signing keys support fallible export and import;
+rcgen only adapts certificate encoding. Explicit context selection controls
+first-party TLS configuration even after Rustls global initialization. Without
+explicit selection, builders preserve embedder defaults. Capability reporting
+does not attest globals or dependency-owned crypto. This boundary prepares a
+system-OpenSSL backend; its proof of concept, dynamic-link packaging, and strict
+FIPS operation are separate follow-up work. The crate README defines extension and coverage boundaries.
 Digest operations propagate backend failures through JWT and credential key-ID
 generation rather than requiring infallible provider operations.
 

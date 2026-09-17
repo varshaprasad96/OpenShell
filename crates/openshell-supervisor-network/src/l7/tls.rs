@@ -9,9 +9,10 @@
 //! inspects the plaintext HTTP, then re-encrypts to upstream using real root CAs.
 
 use miette::{IntoDiagnostic, Result, WrapErr, miette};
-use rcgen::{CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
+use openshell_crypto::pki::KeyPair;
+use rcgen::{CertificateParams, DnType, IsCa, KeyUsagePurpose};
+use rustls::ClientConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls::{ClientConfig, ServerConfig};
 use std::collections::HashMap;
 use std::io::{BufReader, Write as _};
 use std::path::{Path, PathBuf};
@@ -68,8 +69,8 @@ impl SandboxCa {
     }
 
     /// Returns the CA private key in PKCS#8 PEM format.
-    pub fn private_key_pem(&self) -> String {
-        self.ca_key.serialize_pem()
+    pub fn private_key_pem(&self) -> Result<String> {
+        self.ca_key.serialize_pem().into_diagnostic()
     }
 
     /// Load a durable CA certificate and matching private key from absolute paths.
@@ -117,7 +118,7 @@ impl SandboxCa {
             .into_diagnostic()
             .wrap_err("parse proxy CA private key")?
             .ok_or_else(|| miette!("proxy CA private key file contains no private key"))?;
-        ServerConfig::builder()
+        openshell_crypto::tls::server_builder()
             .with_no_client_auth()
             .with_single_cert(certificates, private_key)
             .into_diagnostic()
@@ -126,8 +127,7 @@ impl SandboxCa {
         let params = CertificateParams::from_ca_cert_pem(certificate_pem)
             .into_diagnostic()
             .wrap_err("parse proxy CA signing certificate")?;
-        let ca_cert = params
-            .self_signed(&ca_key)
+        let ca_cert = openshell_crypto::pki::self_signed(params, &ca_key)
             .into_diagnostic()
             .wrap_err("initialize proxy CA signer")?;
         Ok(Self {
@@ -194,7 +194,7 @@ impl CertCache {
 
         let leaf_der = CertificateDer::from(leaf_cert.der().to_vec());
         let ca_der = CertificateDer::from(self.ca.ca_cert.der().to_vec());
-        let key_der = PrivateKeyDer::try_from(leaf_key.serialize_der())
+        let key_der = PrivateKeyDer::try_from(leaf_key.serialize_der().into_diagnostic()?)
             .map_err(|e| miette::miette!("failed to serialize leaf key: {e}"))?;
 
         Ok(CertifiedLeaf {
@@ -222,7 +222,7 @@ impl ProxyTlsState {
     /// Get or generate a leaf cert for the hostname and return a TLS acceptor.
     fn acceptor_for(&self, hostname: &str) -> Result<TlsAcceptor> {
         let leaf = self.cert_cache.get_or_generate(hostname)?;
-        let mut server_config = ServerConfig::builder()
+        let mut server_config = openshell_crypto::tls::server_builder()
             .with_no_client_auth()
             .with_single_cert(leaf.cert_chain.clone(), leaf.private_key.clone_key())
             .into_diagnostic()?;
@@ -279,7 +279,7 @@ pub async fn tls_connect_upstream(
 /// `system_ca_bundle` is ignored because the native store already reflects all
 /// operator-installed trust anchors.
 pub fn build_upstream_client_config(system_ca_bundle: &str) -> Result<Arc<ClientConfig>> {
-    let mut config = ClientConfig::builder()
+    let mut config = openshell_crypto::tls::client_builder()
         .with_root_certificates(build_upstream_root_store(system_ca_bundle)?)
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -701,18 +701,24 @@ mod tests {
     fn durable_ca_round_trip_preserves_certificate_bytes() {
         let generated = SandboxCa::generate().unwrap();
         let certificate = generated.cert_pem().to_string();
-        let private_key = generated.private_key_pem();
+        let private_key = generated.private_key_pem().unwrap();
         let loaded = SandboxCa::from_pem(&certificate, &private_key).unwrap();
 
         assert_eq!(loaded.cert_pem(), certificate);
-        assert_eq!(loaded.private_key_pem(), private_key);
+        assert_eq!(loaded.private_key_pem().unwrap(), private_key);
     }
 
     #[test]
     fn durable_ca_rejects_mismatched_key_and_relative_paths() {
         let certificate = SandboxCa::generate().unwrap();
         let other_key = SandboxCa::generate().unwrap();
-        assert!(SandboxCa::from_pem(certificate.cert_pem(), &other_key.private_key_pem()).is_err());
+        assert!(
+            SandboxCa::from_pem(
+                certificate.cert_pem(),
+                &other_key.private_key_pem().unwrap()
+            )
+            .is_err()
+        );
         assert!(SandboxCa::load_from_paths(Path::new("ca.pem"), Path::new("ca.key")).is_err());
     }
 }
