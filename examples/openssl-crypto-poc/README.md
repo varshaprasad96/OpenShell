@@ -40,6 +40,7 @@ docker run --rm \
   vector, and wrong-key, wrong-AAD, truncated and modified ciphertext rejection.
 - OpenSSL-owned P-256, P-384, Ed25519 and RSA keys; PKCS#8/PEM import and export;
   and certificate signatures checked through OpenSSL's X.509 API.
+- Persisted CA import and leaf issuance through the backend-free parser.
 - A software-enforced non-exportable issuer that still signs certificates.
   This demonstrates ownership, not hardware-backed key protection.
 - HS256, ES256, RS256 and EdDSA JWT signing and verification through the facade,
@@ -47,7 +48,7 @@ docker run --rm \
 - A Rustls TLS 1.3 handshake and encrypted application data using OpenSSL for
   TLS cryptography and certificate verification.
 - Configuration making OpenSSL algorithm fetches deliberately unsatisfiable:
-  RNG, digest and key generation return errors without backend fallback.
+  RNG, digest and EVP key generation return errors without backend fallback.
 
 The adapters are `rustls-openssl` 0.4.1 and `jsonwebtoken-openssl` 1.0.0. The
 latter supports jsonwebtoken 10; its version 2 targets jsonwebtoken 11.
@@ -58,15 +59,17 @@ The backend-owned key and protocol contracts support OpenSSL without changing
 the facade's traits. OpenSSL resources stay in the key object; rcgen encodes
 certificates and delegates signing.
 
-The PoC enables rcgen's optional `x509-parser` feature only in the MITM proxy
-crate, which imports persisted CA certificates. The facade does not need it.
-This removes Ring from this standalone PoC while preserving the application's
-CA-import API. The full application still pulls Ring through that parser;
-removing it requires a different import path or an upstream dependency change.
+CA import uses the facade's `pki::issuer_from_der` helper with `x509-parser`
+without cryptographic verification features. rcgen 0.14.10 continues certificate
+encoding and delegates signing to backend-owned keys. Its own `x509-parser`
+feature stays disabled because it also compiles CSR verification requiring
+AWS-LC or Ring. The CA-import contract test parses a persisted CA, signs a leaf
+with OpenSSL, and verifies its signature and issuer name through OpenSSL.
+This removes the parser dependency blocker without vendoring or patching rcgen.
 
 Other limitations remain:
 
-- rcgen 0.13.2 exposes its P-521 signature descriptor only with AWS-LC enabled.
+- rcgen 0.14.10 exposes its P-521 signature descriptor only with AWS-LC enabled.
   P-521 is omitted here despite OpenSSL supporting it. A follow-up needs upstream
   descriptor availability or a different protocol representation.
 - Strict FIPS requests still fail closed through the existing posture API.
@@ -86,8 +89,17 @@ normal workspace test task. This is an experiment, not a production backend.
 
 ## Validation results
 
-The validation script passed on macOS ARM64 with Homebrew OpenSSL 3.6.3 and on
-Debian Bookworm ARM64 with distribution OpenSSL 3.0.18 (Rust 1.94 container).
-Both runs passed all six contract tests, Clippy, the no-AWS-LC/no-Ring dependency
-check, dynamic-link inspection and unavailable-provider negative checks.
-The Linux container does not validate RHEL or a FIPS-enabled host.
+The refreshed PoC passes all eight contract tests on macOS ARM64 with Homebrew
+OpenSSL 3.6.3, including persisted CA import. Formatting, Clippy, dependency checks,
+dynamic-link inspection, and unavailable-provider negative checks also pass.
+The standalone dependency graph contains no AWS-LC, Ring, or vendored OpenSSL.
+
+`--fips-report` reports TLS FIPS posture, SHA-256 availability with `fips=yes`,
+and the facade's strict posture result. On this development host all three are
+false; only the default OpenSSL provider is active and no FIPS module is installed.
+`--require-fips` exits with status 2, as required for an unverified backend.
+These diagnostics are not module validation or deployment attestation.
+
+The earlier version passed on Debian Bookworm ARM64 with distribution OpenSSL
+3.0.18. The refreshed parser version has not been rerun on Linux because the local
+Docker daemon is unresponsive. No RHEL FIPS environment has been validated.

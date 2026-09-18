@@ -28,7 +28,7 @@ pub fn write_test_file(dir: &Path, name: &str, data: &[u8]) {
 /// - `ca.pem`
 /// - `server-cert.pem`
 /// - `server-key.pem`
-pub fn generate_test_certs_with_ca(dir: &Path) -> (rcgen::Certificate, KeyPair) {
+pub fn generate_test_certs_with_ca(dir: &Path) -> (openshell_crypto::pki::Certificate, KeyPair) {
     let mut ca_params =
         CertificateParams::new(Vec::<String>::new()).expect("failed to create CA params");
     ca_params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);

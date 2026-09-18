@@ -26,3 +26,14 @@ cat "$CARGO_TARGET_DIR/poc-linked-libraries.txt"
 grep -Eq 'libcrypto[.].*(dylib|so)|libcrypto[.]so' "$CARGO_TARGET_DIR/poc-linked-libraries.txt"
 "$binary"
 OPENSSL_CONF="$PWD/unavailable.cnf" "$binary" --expect-unavailable
+
+"$binary" --fips-report > "$CARGO_TARGET_DIR/poc-fips-report.txt"
+cat "$CARGO_TARGET_DIR/poc-fips-report.txt"
+if "$binary" --require-fips > "$CARGO_TARGET_DIR/poc-fips-required.txt" 2>&1; then
+    echo "Unexpected strict-FIPS acceptance from an unverified PoC" >&2
+    exit 1
+else
+    status=$?
+    test "$status" -eq 2
+fi
+cat "$CARGO_TARGET_DIR/poc-fips-required.txt"

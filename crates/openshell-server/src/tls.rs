@@ -505,7 +505,11 @@ mod tests {
 
     /// Generate a new server cert + key in `dir`, signed by the given CA.
     /// Overwrites `server-cert.pem` and `server-key.pem`.
-    fn generate_server_cert(ca_cert: &rcgen::Certificate, ca_key: &KeyPair, dir: &Path) {
+    fn generate_server_cert(
+        ca_cert: &openshell_crypto::pki::Certificate,
+        ca_key: &KeyPair,
+        dir: &Path,
+    ) {
         let server_params = CertificateParams::new(vec!["localhost".to_string()])
             .expect("failed to create server params");
         let server_key =
@@ -1085,7 +1089,7 @@ mod tests {
     /// Generate a cert+key pair with given SANs, signed by the provided CA,
     /// and write them to the specified files in `dir`.
     fn generate_named_cert(
-        ca_cert: &rcgen::Certificate,
+        ca_cert: &openshell_crypto::pki::Certificate,
         ca_key: &KeyPair,
         dir: &Path,
         cert_file: &str,

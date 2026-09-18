@@ -9,11 +9,11 @@ use openshell_crypto::{
 };
 use openssl::{
     bn::BigNumContext,
-    ec::{EcGroup, EcKey, PointConversionForm},
+    ec::PointConversionForm,
     hash::{Hasher, MessageDigest},
     nid::Nid,
     pkey::{Id, PKey, Private},
-    rsa::Rsa,
+    pkey_ctx::PkeyCtx,
     sign::Signer,
     symm::{Cipher, decrypt_aead, encrypt_aead},
 };
@@ -190,7 +190,9 @@ impl OpenSsl {
         algorithm: &'static rcgen::SignatureAlgorithm,
     ) -> Result<PKey<Private>, rcgen::Error> {
         if algorithm == &rcgen::PKCS_ED25519 {
-            return PKey::generate_ed25519().map_err(key_error);
+            let mut context = PkeyCtx::new_id(Id::ED25519).map_err(key_error)?;
+            context.keygen_init().map_err(key_error)?;
+            return context.keygen().map_err(key_error);
         }
         if [
             &rcgen::PKCS_RSA_SHA256,
@@ -199,7 +201,10 @@ impl OpenSsl {
         ]
         .contains(&algorithm)
         {
-            return PKey::from_rsa(Rsa::generate(2048).map_err(key_error)?).map_err(key_error);
+            let mut context = PkeyCtx::new_id(Id::RSA).map_err(key_error)?;
+            context.keygen_init().map_err(key_error)?;
+            context.set_rsa_keygen_bits(2048).map_err(key_error)?;
+            return context.keygen().map_err(key_error);
         }
         let curve = if algorithm == &rcgen::PKCS_ECDSA_P256_SHA256 {
             Nid::X9_62_PRIME256V1
@@ -208,8 +213,12 @@ impl OpenSsl {
         } else {
             return Err(rcgen::Error::UnsupportedSignatureAlgorithm);
         };
-        let group = EcGroup::from_curve_name(curve).map_err(key_error)?;
-        PKey::from_ec_key(EcKey::generate(&group).map_err(key_error)?).map_err(key_error)
+        let mut context = PkeyCtx::new_id(Id::EC).map_err(key_error)?;
+        context.keygen_init().map_err(key_error)?;
+        context
+            .set_ec_paramgen_curve_nid(curve)
+            .map_err(key_error)?;
+        context.keygen().map_err(key_error)
     }
 }
 

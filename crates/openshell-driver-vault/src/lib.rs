@@ -1005,7 +1005,7 @@ mod tests {
         file
     }
 
-    fn test_ca() -> (rcgen::Certificate, KeyPair) {
+    fn test_ca() -> (openshell_crypto::pki::Certificate, KeyPair) {
         let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
         params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         let key = openshell_crypto::pki::generate_keypair().unwrap();

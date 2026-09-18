@@ -5,9 +5,9 @@ production implementation. This change preserves TLS algorithms, Ed25519 gateway
 JWTs, P-256 certificate keys, native trust roots, and credential envelope formats.
 The interface is intended to support a system-OpenSSL backend for regulated
 deployments, related to [#900](https://github.com/NVIDIA/OpenShell/issues/900).
-AWS-LC remains the only production implementation. The standalone
-[OpenSSL PoC](../../examples/openssl-crypto-poc/README.md) validates the provider
-contracts separately; it is not a FIPS build or compliance claim.
+Application binaries still select AWS-LC. The standalone
+[OpenSSL PoC](../../examples/openssl-crypto-poc/README.md) exercises the interface
+with system shared libraries; this is not a FIPS build or compliance claim.
 
 ## Boundaries
 
@@ -23,11 +23,16 @@ the one-shot SHA-256 helper propagates the first failure without fallback.
 
 Callers use `aead`, `pki`, `tls`, and `jwt`, or an explicit `CryptoContext`.
 Certificate policy and JWT claim validation remain at their existing callers.
-`pki::KeyPair` owns a backend `SigningKey` and a private rcgen remote-key adapter.
+`pki::KeyPair` owns a backend `SigningKey` and implements rcgen 0.14's
+`PublicKeyData` and `SigningKey` traits directly.
 The backend generates/imports keys, signs messages, and exports PKCS#8 DER.
 PEM wrapping and certificate encoding remain in the facade. Public keys expose
 algorithm-specific bytes and SPKI; private exports are fallible, including for
-non-exportable keys. Callers never serialize the rcgen remote key itself.
+non-exportable keys. Certificate encoding never requires private-key export.
+`pki::Certificate` retains public issuance parameters separately from the encoded
+certificate, allowing generated certificates to be used as issuers without
+retaining private keys. Persisted proxy CAs use `pki::issuer_from_der` and keep
+their original certificate bytes in issued chains.
 Persisted CA keys are imported through the selected backend. Provider resources
 must remain alive for the full key lifetime.
 Default certificate serial numbers and key identifiers are derived through the
@@ -56,8 +61,8 @@ from the entire product graph.
 The later OpenSSL build must use system shared libraries without vendoring,
 respect system provider configuration, and verify the resulting linked artifacts.
 Linking and module qualification are build/deployment concerns, separate from the
-Rust key and primitive contracts. The proof of concept tests dynamic linkage and the Rustls provider integration;
-deployment qualification remains work for a production OpenSSL backend.
+Rust key and primitive contracts. The proof of concept will test those concerns
+and the Rustls provider integration before a production OpenSSL backend is added.
 
 ## Lifecycle and posture
 
@@ -107,10 +112,20 @@ scheduling randomness are not migrated. No SSH or PQC capability is asserted by
 the primitive capability report. OpenSSL, strict policy, module version discovery,
 and deployment qualification belong in follow-up work.
 
-Durable proxy CA loading uses backend key import and retains rcgen's X.509
-parser. Only the proxy enables rcgen's parser feature; the standalone facade
-does not require it. The parser and build-time Z3 downloader retain the narrowly allowed Ring dependencies
-listed in `deny.toml`; context capabilities do not attest these paths.
+Durable proxy CA loading uses backend key import and `pki::issuer_from_der`.
+The helper uses `x509-parser` without verification features to read the subject,
+key usage, and subject key identifier. Missing identifiers use the selected
+backend's SHA-256 over SPKI, truncated to 20 bytes. It rejects trailing bytes,
+malformed metadata, and subject names that rcgen cannot represent without loss
+(including repeated attribute OIDs and multi-valued RDNs).
+Parsing does not establish trust or verify signatures; the proxy separately
+checks certificate/key matching through the selected TLS backend.
+rcgen's `x509-parser` feature stays disabled: in 0.14.10 it also compiles CSR
+verification that requires AWS-LC or Ring. No fork or fallback backend is needed
+for CA import, and the parser's former Ring exception is removed from `deny.toml`.
+The standalone facade also excludes AWS-LC when default features are disabled.
+The build-time Z3 archive downloader retains the narrowly allowed Rustls/Ring
+wrappers in `deny.toml`; context capabilities do not attest build tools.
 
 ## Extending and checking
 
@@ -124,7 +139,9 @@ Run `cargo test -p openshell-crypto` for known-answer crypto, tampering, JWT
 validation, key import/export, encryption compatibility, context substitution,
 and an actual TLS handshake after process-default preemption.
 `cargo test -p openshell-crypto --no-default-features --test independent_backend`
-exercises independent test-only key and AEAD implementations without AWS-LC. Existing
-bootstrap, credential-store, gateway TLS/OIDC, and proxy tests exercise the
+exercises independent test-only key and AEAD implementations without AWS-LC or
+Ring. Inspect that boundary with
+`cargo tree -p openshell-crypto --no-default-features --edges normal,build`.
+Existing bootstrap, credential-store, gateway TLS/OIDC, and proxy tests exercise the
 migrated consumers. The cargo-deny Ring restrictions and their explicit wrapper
 exceptions remain in force.

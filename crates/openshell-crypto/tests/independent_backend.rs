@@ -160,6 +160,48 @@ fn independent_backend_controls_envelopes_and_the_entire_key_lifecycle() {
     )
     .unwrap();
     assert_eq!(SIGNS.load(Ordering::SeqCst), 2);
+    // Importing a CA must work even when neither rcgen crypto backend exists.
+    for with_identifier in [false, true] {
+        let mut params = rcgen::CertificateParams::default();
+        params.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            rcgen::DnValue::PrintableString("Persisted CA".try_into().unwrap()),
+        );
+        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        if with_identifier {
+            params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+            params.key_identifier_method = rcgen::KeyIdMethod::PreSpecified(vec![42; 20]);
+        }
+        let ca = pki::self_signed(params, &key).unwrap();
+        let imported =
+            pki::issuer_from_der(ca.der(), pki::generate_jwt_keypair().unwrap()).unwrap();
+        assert_eq!(
+            imported.key_usages(),
+            &[rcgen::KeyUsagePurpose::KeyCertSign]
+        );
+        let mut params = rcgen::CertificateParams::default();
+        params.use_authority_key_identifier_extension = true;
+        let leaf = pki::signed_by_issuer(params, &key, &imported).unwrap();
+        let (_, parsed_ca) = x509_parser::parse_x509_certificate(ca.der()).unwrap();
+        let (_, parsed_leaf) = x509_parser::parse_x509_certificate(leaf.der()).unwrap();
+        assert_eq!(parsed_leaf.issuer().as_raw(), parsed_ca.subject().as_raw());
+        let expected = if with_identifier {
+            vec![42; 20]
+        } else {
+            openshell_crypto::sha256(parsed_ca.public_key().raw).unwrap()[..20].to_vec()
+        };
+        assert!(parsed_leaf.extensions().iter().any(|extension| {
+            matches!(extension.parsed_extension(),
+                x509_parser::extensions::ParsedExtension::AuthorityKeyIdentifier(value)
+                    if value.key_identifier.as_ref().unwrap().0 == expected)
+        }));
+        let mut trailing = ca.der().to_vec();
+        trailing.push(0);
+        assert!(pki::issuer_from_der(&trailing, pki::generate_jwt_keypair().unwrap()).is_err());
+        assert!(
+            pki::issuer_from_der(&ca.der()[..10], pki::generate_jwt_keypair().unwrap()).is_err()
+        );
+    }
     let drops = Arc::new(AtomicUsize::new(0));
     let non_exportable = pki::KeyPair::new(Box::new(Key {
         exportable: false,

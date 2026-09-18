@@ -39,15 +39,18 @@ feature centrally. Backend-owned signing keys support fallible export and import
 rcgen only adapts certificate encoding. Explicit context selection controls
 first-party TLS configuration even after Rustls global initialization. Without
 explicit selection, builders preserve embedder defaults. Capability reporting
-does not attest globals or dependency-owned crypto. The standalone
-[OpenSSL interface experiment](../examples/openssl-crypto-poc/README.md) exercises
-this boundary against dynamically linked system OpenSSL without selecting it for
-application binaries. Dynamic-link packaging and strict FIPS operation remain
-follow-up work. The crate README defines extension and coverage boundaries.
-The rcgen certificate-parser feature is enabled only by the MITM proxy that
-imports persisted CAs; it is not required by the crypto facade.
+does not attest globals or dependency-owned crypto. This boundary prepares a
+system-OpenSSL backend; its proof of concept, dynamic-link packaging, and strict
+FIPS operation are separate follow-up work. The crate README defines extension and coverage boundaries.
 Digest operations propagate backend failures through JWT and credential key-ID
 generation rather than requiring infallible provider operations.
+Persisted CA metadata is parsed by `openshell-crypto` using `x509-parser`
+without verification features. rcgen's parser feature remains disabled because
+it couples parsing to built-in CSR verification backends. Backend keys implement
+rcgen's signing trait directly; the proxy checks certificate/key matching through
+the selected TLS backend and retains the original CA bytes in certificate chains.
+The standalone [OpenSSL PoC](../examples/openssl-crypto-poc/README.md)
+exercises this boundary with dynamically linked system OpenSSL.
 
 SQLx uses AWS-LC with native certificate roots.
  The server enables

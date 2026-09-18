@@ -4,7 +4,7 @@
 use crate::jwt::{JwtKeyMaterial, generate_jwt_key};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use rcgen::{
-    BasicConstraints, CertificateParams, DnType, Ia5String, IsCa, KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, DnType, IsCa, KeyUsagePurpose, SanType, string::Ia5String,
 };
 use std::net::IpAddr;
 

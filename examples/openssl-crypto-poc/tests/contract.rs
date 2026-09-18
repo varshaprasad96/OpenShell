@@ -277,3 +277,54 @@ fn tls13_handshake_and_application_data() {
     server.reader().read_exact(&mut received).unwrap();
     assert_eq!(&received, b"openssl transport");
 }
+
+#[test]
+fn owned_issuer_uses_backend_key_without_export() {
+    init();
+    let issuer_key = OpenSsl.non_exportable_key().unwrap();
+    let public = openssl::pkey::PKey::public_key_from_der(&issuer_key.public_key_der()).unwrap();
+    let mut params = rcgen::CertificateParams::default();
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let ca = pki::self_signed(params, &issuer_key).unwrap();
+    let issuer = ca.into_issuer(issuer_key);
+    let leaf_key = pki::generate_keypair().unwrap();
+    let leaf = pki::signed_by_issuer(
+        rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap(),
+        &leaf_key,
+        &issuer,
+    )
+    .unwrap();
+    assert!(
+        openssl::x509::X509::from_der(leaf.der())
+            .unwrap()
+            .verify(&public)
+            .unwrap()
+    );
+    assert!(issuer.key().serialize_der().is_err());
+}
+
+#[test]
+fn imported_ca_signs_with_openssl() {
+    init();
+    let key = pki::generate_keypair().unwrap();
+    let mut params = rcgen::CertificateParams::default();
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+    let ca = pki::self_signed(params, &key).unwrap();
+    let pem = key.serialize_pem().unwrap();
+    let issuer = pki::issuer_from_der(ca.der(), pki::KeyPair::from_pem(&pem).unwrap()).unwrap();
+    let leaf_key = pki::generate_keypair().unwrap();
+    let leaf = pki::signed_by_issuer(
+        rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap(),
+        &leaf_key,
+        &issuer,
+    )
+    .unwrap();
+    let ca = openssl::x509::X509::from_der(ca.der()).unwrap();
+    let leaf = openssl::x509::X509::from_der(leaf.der()).unwrap();
+    assert!(leaf.verify(&ca.public_key().unwrap()).unwrap());
+    assert_eq!(
+        leaf.issuer_name().to_der().unwrap(),
+        ca.subject_name().to_der().unwrap()
+    );
+}

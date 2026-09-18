@@ -17,7 +17,7 @@ rustls-openssl = { version = "=0.4.1", default-features = false, features = ["tl
 jsonwebtoken-openssl = "=1.0.0"
 jsonwebtoken = { version = "10.3", default-features = false, features = ["use_pem"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
-rcgen = { version = "0.13", default-features = false, features = ["pem"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["pem"] }
 
 [dev-dependencies]
 serde_json = "1"

@@ -97,8 +97,9 @@ macro_rules! unimplemented_sandbox_template_rpcs {
     };
 }
 
+use openshell_crypto::pki::Certificate;
 use openshell_crypto::pki::KeyPair;
-use rcgen::{BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa};
+use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa};
 
 // ── EnvVarGuard ──────────────────────────────────────────────────────────────
 

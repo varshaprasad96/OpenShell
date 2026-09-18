@@ -33,8 +33,8 @@ const SYSTEM_CA_PATHS: &[&str] = &[
 /// Ephemeral CA certificate and key for MITM TLS termination.
 #[allow(clippy::struct_field_names)]
 pub struct SandboxCa {
-    ca_cert: rcgen::Certificate,
-    ca_key: KeyPair,
+    issuer: rcgen::Issuer<'static, KeyPair>,
+    ca_der: CertificateDer<'static>,
     ca_cert_pem: String,
 }
 
@@ -57,8 +57,8 @@ impl SandboxCa {
         let ca_cert_pem = ca_cert.pem();
 
         Ok(Self {
-            ca_cert,
-            ca_key,
+            ca_der: ca_cert.der().clone(),
+            issuer: ca_cert.into_issuer(ca_key),
             ca_cert_pem,
         })
     }
@@ -70,7 +70,7 @@ impl SandboxCa {
 
     /// Returns the CA private key in PKCS#8 PEM format.
     pub fn private_key_pem(&self) -> Result<String> {
-        self.ca_key.serialize_pem().into_diagnostic()
+        self.issuer.key().serialize_pem().into_diagnostic()
     }
 
     /// Load a durable CA certificate and matching private key from absolute paths.
@@ -118,21 +118,19 @@ impl SandboxCa {
             .into_diagnostic()
             .wrap_err("parse proxy CA private key")?
             .ok_or_else(|| miette!("proxy CA private key file contains no private key"))?;
+        let ca_der = certificates[0].clone();
         openshell_crypto::tls::server_builder()
             .with_no_client_auth()
             .with_single_cert(certificates, private_key)
             .into_diagnostic()
             .wrap_err("proxy CA certificate and private key do not match")?;
 
-        let params = CertificateParams::from_ca_cert_pem(certificate_pem)
+        let issuer = openshell_crypto::pki::issuer_from_der(&ca_der, ca_key)
             .into_diagnostic()
             .wrap_err("parse proxy CA signing certificate")?;
-        let ca_cert = openshell_crypto::pki::self_signed(params, &ca_key)
-            .into_diagnostic()
-            .wrap_err("initialize proxy CA signer")?;
         Ok(Self {
-            ca_cert,
-            ca_key,
+            issuer,
+            ca_der,
             ca_cert_pem: certificate_pem.to_string(),
         })
     }
@@ -188,12 +186,11 @@ impl CertCache {
         params.distinguished_name.push(DnType::CommonName, hostname);
         params.use_authority_key_identifier_extension = true;
 
-        let leaf_cert =
-            openshell_crypto::pki::signed_by(params, &leaf_key, &self.ca.ca_cert, &self.ca.ca_key)
-                .into_diagnostic()?;
+        let leaf_cert = openshell_crypto::pki::signed_by_issuer(params, &leaf_key, &self.ca.issuer)
+            .into_diagnostic()?;
 
         let leaf_der = CertificateDer::from(leaf_cert.der().to_vec());
-        let ca_der = CertificateDer::from(self.ca.ca_cert.der().to_vec());
+        let ca_der = self.ca.ca_der.clone();
         let key_der = PrivateKeyDer::try_from(leaf_key.serialize_der().into_diagnostic()?)
             .map_err(|e| miette::miette!("failed to serialize leaf key: {e}"))?;
 
@@ -706,6 +703,29 @@ mod tests {
 
         assert_eq!(loaded.cert_pem(), certificate);
         assert_eq!(loaded.private_key_pem().unwrap(), private_key);
+        let original_der = rustls_pemfile::certs(&mut certificate.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
+        let leaf = CertCache::new(loaded).get_or_generate("localhost").unwrap();
+        assert_eq!(leaf.cert_chain[1], original_der);
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(original_der).unwrap();
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            openshell_crypto::tls::configuration_provider(),
+        )
+        .build()
+        .unwrap();
+        rustls::client::danger::ServerCertVerifier::verify_server_cert(
+            verifier.as_ref(),
+            &leaf.cert_chain[0],
+            &[],
+            &ServerName::try_from("localhost").unwrap(),
+            &[],
+            rustls::pki_types::UnixTime::now(),
+        )
+        .unwrap();
     }
 
     #[test]
